@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <!-- Templates Section -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">Add Template</div>
+            <div class="card-body">
+                <form id="templateForm">
+                    <div class="mb-2">
+                        <label>Name</label>
+                        <input type="text" class="form-control" id="t_name" required>
+                    </div>
+                    <div class="mb-2">
+                        <label>Proxmox VMID</label>
+                        <input type="number" class="form-control" id="t_vmid" required>
+                    </div>
+                    <div class="mb-2">
+                        <label>Role</label>
+                        <select class="form-select" id="t_role">
+                            <option value="attacker">Attacker (Kali)</option>
+                            <option value="target">Target</option>
+                        </select>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="t_is_ct">
+                        <label class="form-check-label">Is Container (LXC)?</label>
+                    </div>
+                    <button type="submit" class="btn btn-sm btn-success w-100">Register Template</button>
+                </form>
+                <hr>
+                <h6>Registered Templates</h6>
+                <ul class="list-group" id="templateList"></ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deployment Section -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <span>Lab Tables</span>
+                <div class="input-group input-group-sm" style="width: 250px;">
+                    <input type="number" class="form-control" id="deployTableNum" placeholder="Table #">
+                    <button class="btn btn-success" onclick="deployTable()">Deploy</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Table #</th>
+                            <th>VLAN</th>
+                            <th>Resources</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tablesBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const token = localStorage.getItem('access_token');
+    const headers = { 'Authorization': `Bearer ${token}` };
+
+    async function loadData() {
+        const res = await fetch('/api/dashboard', { headers });
+        if (res.status === 401) window.location.href = '/login';
+        const data = await res.json();
+        
+        // Render Templates
+        const tList = document.getElementById('templateList');
+        tList.innerHTML = '';
+        data.templates.forEach(t => {
+            tList.innerHTML += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                ${t.name} (${t.role}) <span class="badge bg-secondary">${t.pve_vmid}</span>
+            </li>`;
+        });
+
+        // Render Tables
+        const tBody = document.getElementById('tablesBody');
+        tBody.innerHTML = '';
+        data.tables.forEach(table => {
+            const tableResources = data.resources.filter(r => r.table_id === table.id);
+            let resHtml = tableResources.map(r => 
+                `<span class="badge bg-info text-dark">${r.type.toUpperCase()}:${r.vmid} on ${r.node}</span>`
+            ).join(' ');
+
+            tBody.innerHTML += `
+                <tr>
+                    <td>${table.table_number}</td>
+                    <td>${table.vlan_id}</td>
+                    <td>${resHtml || '<span class="text-muted">Empty</span>'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="deleteTable(${table.table_number})">Purge</button>
+                    </td>
+                </tr>
+            `;
+        });
+    }
+
+    // Add Template
+    document.getElementById('templateForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const url = `/templates/?name=${document.getElementById('t_name').value}&vmid=${document.getElementById('t_vmid').value}&role=${document.getElementById('t_role').value}&is_ct=${document.getElementById('t_is_ct').checked}`;
+        
+        const res = await fetch(url, { method: 'POST', headers });
+        if (res.ok) {
+            alert('Template Added');
+            loadData();
+        } else {
+            alert('Error adding template');
+        }
+    });
+
+    // Deploy Table
+    async function deployTable() {
+        const num = document.getElementById('deployTableNum').value;
+        if (!num) return;
+        
+        if(!confirm(`Deploy Table ${num}? This may take a minute.`)) return;
+
+        const btn = document.querySelector('button[onclick="deployTable()"]');
+        btn.disabled = true;
+        btn.innerText = "Deploying...";
+
+        const res = await fetch(`/deploy/table/${num}`, { method: 'POST', headers });
+        if (res.ok) {
+            alert(`Table ${num} deployed successfully!`);
+            loadData();
+        } else {
+            alert('Deployment failed. Check logs.');
+        }
+        btn.disabled = false;
+        btn.innerText = "Deploy";
+    }
+
+    // Delete Table
+    async function deleteTable(num) {
+        if(!confirm(`Are you sure you want to purge Table ${num}?`)) return;
+        const res = await fetch(`/table/${num}`, { method: 'DELETE', headers });
+        if (res.ok) loadData();
+    }
+
+    loadData();
+</script>
+{% endblock %}
